@@ -1,0 +1,22 @@
+
+{
+  "short_name": "SafeSpeak",
+  "name": "SafeSpeak - Báo cáo Bạo lực Học đường",
+  "icons": [
+    {
+      "src": "https://thcslamsonq6.hcm.edu.vn/uploads/32202/logo/logo_thcs_lam_son_1.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "https://thcslamsonq6.hcm.edu.vn/uploads/32202/logo/logo_thcs_lam_son_1.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#4F46E5",
+  "background_color": "#F9FAFB",
+  "orientation": "portrait"
+}

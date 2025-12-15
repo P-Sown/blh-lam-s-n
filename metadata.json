@@ -1,0 +1,9 @@
+{
+  "name": "HỆ THỐNG BÁO CÁO ẨN DANH BẠO LỰC HỌC ĐƯỜNG- TRƯỜNG THCS LAM SƠN",
+  "description": "Ứng dụng báo cáo bạo lực học đường ẩn danh đa phương tiện tích hợp AI phân tích mức độ khẩn cấp.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ]
+}
