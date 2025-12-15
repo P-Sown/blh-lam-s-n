@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="vi">
   <head>
@@ -18,8 +17,15 @@
     </script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script>
-      // Shim for process.env to prevent crashes on mobile
-      window.process = window.process || { env: {} };
+      // CẤU HÌNH MÔI TRƯỜNG CHO WEB TĨNH (DEPLOY)
+      // Bạn hãy dán Gemini API Key của bạn vào dòng dưới đây thay cho dòng chữ 'DÁN_API_KEY_CUA_BAN_VAO_DAY'
+      // Lưu ý: Giữ nguyên dấu ngoặc kép.
+      window.process = {
+        env: {
+          API_KEY: "DÁN_API_KEY_CUA_BAN_VAO_DAY", 
+          NODE_ENV: "production"
+        }
+      };
     </script>
     <style>
       body {

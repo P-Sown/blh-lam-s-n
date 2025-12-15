@@ -49,11 +49,17 @@ const ChatMonitor: React.FC<{ session: CounselingSession, onClose: () => void }>
     const endRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
-        const unsubscribe = subscribeToSessionMessages(session.id, (msgs) => {
-            setMessages(msgs);
-            // Scroll to bottom on new message
-            setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-        });
+        const unsubscribe = subscribeToSessionMessages(
+            session.id, 
+            (msgs) => {
+                setMessages(msgs);
+                // Scroll to bottom on new message
+                setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+            },
+            (error) => {
+                 console.warn("Chat Monitor Sync Error:", error.code);
+            }
+        );
         return () => unsubscribe();
     }, [session.id]);
 

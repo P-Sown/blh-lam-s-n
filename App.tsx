@@ -76,7 +76,7 @@ const AdminProfileModal = ({
     isOpen, 
     onClose, 
     currentUser, 
-    currentAvatar,
+    currentAvatar, 
     onUpdateAvatar,
     initialTab = 'general'
 }: { 
@@ -108,7 +108,7 @@ const AdminProfileModal = ({
             setNewPass('');
             setConfirmPass('');
             setMessage(null);
-            setTab(initialTab); // Set tab based on prop
+            setTab(initialTab);
             setIsUploading(false);
         }
     }, [isOpen, currentAvatar, initialTab]);
@@ -121,10 +121,8 @@ const AdminProfileModal = ({
             return;
         }
         
-        // 1. Save to LocalStorage (Instant)
         localStorage.setItem(`admin_avatar_${currentUser}`, avatarUrl);
         
-        // 2. Save to Cloud (Sync)
         if (isFirebaseEnabled()) {
              await updateAdminAvatarInCloud(currentUser, avatarUrl);
         }
@@ -142,7 +140,6 @@ const AdminProfileModal = ({
 
         try {
             let uploadedUrl = '';
-            // Ưu tiên upload lên Cloud nếu có mạng
             if (isFirebaseEnabled() && navigator.onLine) {
                 try {
                     uploadedUrl = await uploadMediaToCloud(file);
@@ -151,7 +148,6 @@ const AdminProfileModal = ({
                 }
             }
 
-            // Nếu Cloud fail hoặc offline, dùng Base64
             if (!uploadedUrl) {
                 const reader = new FileReader();
                 uploadedUrl = await new Promise<string>((resolve) => {
@@ -167,7 +163,6 @@ const AdminProfileModal = ({
             setMessage({ type: 'error', text: 'Lỗi khi tải ảnh. Vui lòng thử lại.' });
         } finally {
             setIsUploading(false);
-            // Reset input để chọn lại cùng file nếu muốn
             if (fileInputRef.current) fileInputRef.current.value = '';
         }
     };
@@ -187,7 +182,6 @@ const AdminProfileModal = ({
 
         setIsLoading(true);
         try {
-            // 1. Verify old password
             const verifyRes = await verifyAdminPassword(currentUser, oldPass);
             if (verifyRes.status !== 200) {
                 setMessage({ type: 'error', text: 'Mật khẩu cũ không chính xác.' });
@@ -195,7 +189,6 @@ const AdminProfileModal = ({
                 return;
             }
 
-            // 2. Update new password
             if (isFirebaseEnabled()) {
                 await updateAdminPasswordInCloud(currentUser, newPass);
                 setMessage({ type: 'success', text: 'Đổi mật khẩu thành công!' });
@@ -391,6 +384,9 @@ function App() {
   const [isOnline, setIsOnline] = useState(isFirebaseEnabled());
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  
+  // NEW: Fatal Error State (To prevent retry loops)
+  const [isFatalError, setIsFatalError] = useState(false);
 
   // Track the TIMESTAMP of the last high risk report we notified about.
   const lastHighRiskTimestampRef = useRef<number>(0);
@@ -426,7 +422,6 @@ function App() {
   useEffect(() => {
       const fetchAvatar = async () => {
           if (isAdmin && adminUsername) {
-              // 1. Try Local first (fastest)
               const localAvatar = localStorage.getItem(`admin_avatar_${adminUsername}`);
               if (localAvatar) {
                   setAdminAvatar(localAvatar);
@@ -434,7 +429,6 @@ function App() {
                   setAdminAvatar(null);
               }
 
-              // 2. Try Cloud (background update)
               if (isFirebaseEnabled() && navigator.onLine) {
                   const cloudAvatar = await getAdminAvatarFromCloud(adminUsername);
                   if (cloudAvatar && cloudAvatar !== localAvatar) {
@@ -450,42 +444,48 @@ function App() {
 
   // Data Loading Logic
   useEffect(() => {
-    const cleanup = startSync();
+    // 1. Reports Sync
+    const cleanupReports = startSync();
     
-    // Subscribe to counseling alerts separately
-    const cleanupCounseling = subscribeToCounselingSessions((sessions) => {
-        const flaggedSessions = sessions.filter(s => 
-            s.isFlagged && 
-            s.lastActivity > lastHighRiskTimestampRef.current &&
-            // QUAN TRỌNG: Nếu Admin đang xem phiên chat này (monitoringIdRef trùng khớp), thì KHÔNG báo động nữa
-            s.id !== monitoringIdRef.current
-        );
-
-        if (flaggedSessions.length > 0) {
-            setUnreadHighRisk(true);
-            playSiren();
-            sendSystemNotification(
-                "CẢNH BÁO TÂM LÝ!",
-                "Có học sinh đang cần tư vấn khẩn cấp (Nguy cơ cao)."
+    // 2. Counseling Sync (Only if no fatal error)
+    let cleanupCounseling = () => {};
+    if (!isFatalError) {
+         cleanupCounseling = subscribeToCounselingSessions((sessions) => {
+            const flaggedSessions = sessions.filter(s => 
+                s.isFlagged && 
+                s.lastActivity > lastHighRiskTimestampRef.current &&
+                s.id !== monitoringIdRef.current
             );
-            // Update ref to avoid spamming for same timestamp
-            lastHighRiskTimestampRef.current = Math.max(...flaggedSessions.map(s => s.lastActivity));
-        }
-    });
+
+            if (flaggedSessions.length > 0) {
+                setUnreadHighRisk(true);
+                playSiren();
+                sendSystemNotification(
+                    "CẢNH BÁO TÂM LÝ!",
+                    "Có học sinh đang cần tư vấn khẩn cấp (Nguy cơ cao)."
+                );
+                lastHighRiskTimestampRef.current = Math.max(...flaggedSessions.map(s => s.lastActivity));
+            }
+        }, (error) => {
+             // Silence counseling errors if they are permission issues (reports sync will handle notification)
+             console.warn("Counseling subscription error:", error.code);
+        });
+    }
 
     const interval = setInterval(() => {
-      if (!isOnline && isFirebaseEnabled()) {
+      // Don't retry if it's a fatal configuration error (permission denied)
+      if (!isOnline && isFirebaseEnabled() && !isFatalError) {
         console.log("Auto-retrying sync...");
         handleRetrySync();
       }
     }, 10000);
 
     return () => {
-      cleanup();
+      cleanupReports();
       cleanupCounseling();
       clearInterval(interval);
     }; 
-  }, [isOnline]);
+  }, [isOnline, isFatalError]);
 
   const startSync = () => {
     setIsSyncing(true);
@@ -504,6 +504,12 @@ function App() {
       }
     };
 
+    // QUAN TRỌNG: Nếu đã gặp lỗi nghiêm trọng (Fatal), không thử kết nối nữa
+    if (isFatalError) {
+        loadLocalData();
+        return () => {};
+    }
+
     if (isFirebaseEnabled()) {
       console.log("Attempting Firebase connection...");
       unsubscribe = subscribeToReports(
@@ -518,6 +524,7 @@ function App() {
             setIsOnline(true);
             setIsSyncing(false);
             setSyncError(null);
+            setIsFatalError(false);
             checkHighRiskAndNotify(mergedReports);
             
             localOnlyReports.forEach(async (report) => {
@@ -537,19 +544,25 @@ function App() {
             checkHighRiskAndNotify(cloudData);
             setIsOnline(true);
             setIsSyncing(false);
+            setIsFatalError(false);
           }
         },
         (error) => {
           console.warn("Firebase sync failed:", error.code);
-          setIsOnline(false);
+          
+          // Tải dữ liệu offline ngay lập tức khi lỗi
           loadLocalData();
+          setIsOnline(false);
           
           if (error.code === 'permission-denied') {
             setSyncError("Thiếu quyền truy cập (Permission Denied)");
+            setIsFatalError(true); // Stop retrying loop
           } else if (error.code === 'auth/configuration-not-found' || error.code === 'auth/internal-error') {
             setSyncError("Chưa bật Anonymous Auth");
+            setIsFatalError(true); // Stop retrying loop
           } else if (error.code === 'auth/unauthorized-domain') {
             setSyncError("Tên miền chưa được cấp phép trong Firebase Auth (Unauthorized Domain)");
+            setIsFatalError(true); // Stop retrying loop
           }
         }
       );
@@ -580,6 +593,7 @@ function App() {
   };
 
   const handleRetrySync = () => {
+    setIsFatalError(false);
     startSync();
   };
 
@@ -587,7 +601,6 @@ function App() {
     setToast({ message, type });
   };
 
-  // Hàm mới: Bắt đầu báo cáo Ẩn danh ngay lập tức, bỏ qua form xác minh
   const handleStartReporting = () => {
     setStudentInfo({
         fullName: 'Ẩn danh',
@@ -599,12 +612,11 @@ function App() {
   };
 
   const handleReportSubmit = async (newReportData: Omit<Report, 'id' | 'timestamp' | 'status' | 'isAnonymous' | 'studentName' | 'studentClass' | 'nationalId'>) => {
-    // --- RATE LIMIT CHECK ---
     const RATE_LIMIT_KEY = 'rpt_rate_limit_ts';
     const BAN_KEY = 'rpt_ban_until';
     const MAX_REPORTS = 5;
-    const TIME_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
-    const BAN_DURATION_MS = 1 * 60 * 1000; // 1 minute
+    const TIME_WINDOW_MS = 10 * 60 * 1000;
+    const BAN_DURATION_MS = 1 * 60 * 1000;
     const now = Date.now();
 
     const banUntil = parseInt(localStorage.getItem(BAN_KEY) || '0', 10);
@@ -624,10 +636,8 @@ function App() {
        showToast("Hệ thống phát hiện Spam. Bạn bị tạm cấm gửi trong 1 phút.", "error");
        return; 
     }
-    // --- END RATE LIMIT CHECK ---
 
     if (!studentInfo) {
-      // Fallback nếu chưa có studentInfo (không nên xảy ra nếu đi từ nút home)
       setStudentInfo({
           fullName: 'Ẩn danh',
           studentClass: 'N/A',
@@ -654,23 +664,21 @@ function App() {
       ...newReportData,
     };
     
-    // --- QUAN TRỌNG: THỬ LƯU VÀO MÁY (INDEXED DB) TRƯỚC ---
     try {
-        await saveReport(newReport); // Hàm này giờ sẽ throw lỗi nếu không lưu được
+        await saveReport(newReport);
     } catch (err) {
         console.error("Save Report Failed:", err);
         showToast("Lỗi nghiêm trọng: Không thể lưu báo cáo vào thiết bị. Vui lòng kiểm tra dung lượng bộ nhớ.", "error");
-        return; // Dừng lại, không giả vờ thành công
+        return;
     }
     
-    // Nếu lưu Local thành công thì mới update State và thử gửi Cloud
     history.push(now);
     localStorage.setItem(RATE_LIMIT_KEY, JSON.stringify(history));
 
     setReports(prevReports => [newReport, ...prevReports]);
     
     let savedToCloud = false;
-    if (isOnline && isFirebaseEnabled()) {
+    if (isOnline && isFirebaseEnabled() && !isFatalError) {
       try {
         await addReportToCloud(newReport);
         savedToCloud = true;
@@ -685,7 +693,6 @@ function App() {
       setUnreadHighRisk(true);
       showToast("Báo cáo đã được gửi. Hệ thống đã gửi CẢNH BÁO KHẨN CẤP tới Ban Giám Hiệu!", "error");
     } else {
-      // Phân biệt rõ thông báo Online/Offline
       if (savedToCloud) {
           showToast("Báo cáo đã gửi thành công (Đã đồng bộ Cloud).", "success");
       } else {
@@ -714,7 +721,7 @@ function App() {
       status: ReportStatus.PENDING,
       isAnonymous: true,
       aiAnalysis: {
-        isSchoolViolence: true, // SOS is always considered valid
+        isSchoolViolence: true,
         urgency: UrgencyLevel.HIGH,
         summary: "SOS: YÊU CẦU CỨU HỘ NGAY LẬP TỨC",
         category: ["KHẨN CẤP", "NGUY HIỂM TÍNH MẠNG"],
@@ -722,7 +729,6 @@ function App() {
       }
     };
 
-    // --- QUAN TRỌNG: THỬ LƯU VÀO MÁY (INDEXED DB) TRƯỚC ---
     try {
         await saveReport(sosReport);
     } catch (e) {
@@ -732,8 +738,7 @@ function App() {
     
     setReports(prev => [sosReport, ...prev]);
 
-    // 3. Cloud Sync (The "Code 200" part)
-    if (isOnline && isFirebaseEnabled()) {
+    if (isOnline && isFirebaseEnabled() && !isFatalError) {
         try {
             await addReportToCloud(sosReport);
         } catch (e) {
@@ -744,7 +749,6 @@ function App() {
         console.warn("SOS saved locally (Offline mode)");
     }
 
-    // Trigger local alerts
     lastHighRiskTimestampRef.current = sosReport.timestamp;
     setUnreadHighRisk(true);
   };
@@ -755,11 +759,11 @@ function App() {
         const updatedReport = { 
             ...r, 
             status,
-            processedBy: adminUsername || 'Ban Giám Hiệu', // Lưu tên người xử lý
-            processedAt: Date.now() // Record time
+            processedBy: adminUsername || 'Ban Giám Hiệu',
+            processedAt: Date.now()
         };
         saveReport(updatedReport);
-        if (isOnline && isFirebaseEnabled()) {
+        if (isOnline && isFirebaseEnabled() && !isFatalError) {
            addReportToCloud(updatedReport);
         }
         return updatedReport;
@@ -955,7 +959,6 @@ function App() {
                         <ChevronDown size={14} className="text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-200 transition-transform group-hover:rotate-180" />
                     </button>
 
-                    {/* Dropdown Menu - Hover Trigger */}
                     <div className="absolute right-0 top-full mt-2 w-56 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 overflow-hidden opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all transform origin-top-right duration-200">
                         <div className="p-3 border-b border-gray-100 dark:border-gray-700 md:hidden">
                             <p className="text-xs text-gray-400">Đang đăng nhập:</p>
@@ -1057,7 +1060,6 @@ function App() {
         )}
 
         {currentView === 'counseling' && (
-          // Pass studentInfo so session can be linked to identity (or kept anonymous if guest)
           <Counseling studentInfo={studentInfo} />
         )}
 
@@ -1065,7 +1067,7 @@ function App() {
           <div className="animate-fade-in">
             <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6 flex items-center gap-2">
                Bảng điều khiển Nhà trường
-               {isOnline ? (
+               {isOnline && !isFatalError ? (
                   <span className="text-xs font-normal bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 px-2 py-0.5 rounded-full flex items-center gap-1">
                     <Cloud size={10} /> Live Sync
                   </span>

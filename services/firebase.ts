@@ -328,37 +328,80 @@ export const saveCounselingMessage = async (sessionId: string, message: ChatMess
     }
 };
 
-export const subscribeToCounselingSessions = (onData: (sessions: CounselingSession[]) => void) => {
+export const subscribeToCounselingSessions = (
+    onData: (sessions: CounselingSession[]) => void,
+    onError?: (error: any) => void
+) => {
     if (!isFirebaseEnabled()) return () => {};
     
-    // Listen to sessions, ordered by activity
-    // Note: We won't load ALL messages here to save bandwidth, just the session metadata
-    return db.collection("counseling_sessions")
-        .orderBy("lastActivity", "desc")
-        .limit(50)
-        .onSnapshot((snapshot: any) => {
-            const sessions: CounselingSession[] = [];
-            snapshot.forEach((doc: any) => {
-                sessions.push(doc.data() as CounselingSession);
-            });
-            onData(sessions);
-        });
+    let unsubscribe: (() => void) | null = null;
+    let isSubscribed = true;
+
+    waitForAuth().then(() => {
+        if (!isSubscribed) return;
+
+        try {
+            unsubscribe = db.collection("counseling_sessions")
+                .orderBy("lastActivity", "desc")
+                .limit(50)
+                .onSnapshot((snapshot: any) => {
+                    const sessions: CounselingSession[] = [];
+                    snapshot.forEach((doc: any) => {
+                        sessions.push(doc.data() as CounselingSession);
+                    });
+                    onData(sessions);
+                }, (error: any) => {
+                    console.warn("Counseling Sync Error:", error.code);
+                    if (onError) onError(error);
+                });
+        } catch (err) {
+            if (onError) onError(err);
+        }
+    });
+
+    return () => {
+        isSubscribed = false;
+        if (unsubscribe) unsubscribe();
+    };
 };
 
-export const subscribeToSessionMessages = (sessionId: string, onData: (msgs: ChatMessage[]) => void) => {
+export const subscribeToSessionMessages = (
+    sessionId: string, 
+    onData: (msgs: ChatMessage[]) => void,
+    onError?: (error: any) => void
+) => {
     if (!isFirebaseEnabled()) return () => {};
 
-    return db.collection("counseling_sessions")
-        .doc(sessionId)
-        .collection("messages")
-        .orderBy("timestamp", "asc")
-        .onSnapshot((snapshot: any) => {
-            const msgs: ChatMessage[] = [];
-            snapshot.forEach((doc: any) => {
-                msgs.push(doc.data() as ChatMessage);
-            });
-            onData(msgs);
-        });
+    let unsubscribe: (() => void) | null = null;
+    let isSubscribed = true;
+
+    waitForAuth().then(() => {
+        if (!isSubscribed) return;
+
+        try {
+             unsubscribe = db.collection("counseling_sessions")
+                .doc(sessionId)
+                .collection("messages")
+                .orderBy("timestamp", "asc")
+                .onSnapshot((snapshot: any) => {
+                    const msgs: ChatMessage[] = [];
+                    snapshot.forEach((doc: any) => {
+                        msgs.push(doc.data() as ChatMessage);
+                    });
+                    onData(msgs);
+                }, (error: any) => {
+                    console.warn("Messages Sync Error:", error.code);
+                    if (onError) onError(error);
+                });
+        } catch (err) {
+            if (onError) onError(err);
+        }
+    });
+
+    return () => {
+        isSubscribed = false;
+        if (unsubscribe) unsubscribe();
+    };
 };
 
 
